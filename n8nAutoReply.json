@@ -1,0 +1,263 @@
+{
+  "name": "My workflow 2",
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "filters": {}
+      },
+      "name": "Gmail Trigger",
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1,
+      "position": [
+        -736,
+        80
+      ],
+      "id": "ba5cf368-3391-4000-aa97-c5bcd937d8d0"
+    },
+    {
+      "parameters": {
+        "functionCode": "// Gmail Message Parser for n8n\nconst items = $input.all();\nconst results = [];\nfor (const item of items) {\n  const msg = item.json || {};\n  const headers = msg.headers || msg.rawHeaders || (msg.payload && msg.payload.headers) || {};\n  const h = {};\n  Object.keys(headers || {}).forEach(k => h[k.toLowerCase()] = headers[k]);\n  const from = (msg.From || msg.from || h['from'] || '').toString();\n  const to = (msg.To || msg.to || h['to'] || '').toString();\n  const subject = (msg.Subject || msg.subject || h['subject'] || '').toString();\n  const snippet = msg.snippet || '';\n  let replyTo = (h['reply-to'] || msg.replyTo || msg.reply_to || from || '').toString();\n  replyTo = replyTo.replace(/^.*<([^>]+)>.*$/, '$1').trim();\n  const forwardedByResend = String(from).toLowerCase().includes('onboarding@resend.dev') || Object.keys(h).some(k => String(h[k]).toLowerCase().includes('resend'));\n  const alreadyAutoReplied = !!(h['x-auto-reply'] || h['auto-submitted'] || h['x-autoreply'] || h['x-autorespond']);\n  const messageId = h['message-id'] || h['x-message-id'] || msg.id || null;\n  const fingerprint = messageId || `${replyTo}|${subject}|${h['date'] || msg.internalDate || ''}`;\n  const shouldReply = forwardedByResend && !alreadyAutoReplied && !!replyTo;\n  const threadId = msg.threadId || '';\n  const internalDate = msg.internalDate || '';\n  const labels = msg.labels || [];\n  const sizeEstimate = msg.sizeEstimate || 0;\n  results.push({\n    json: {\n      id: msg.id,\n      threadId,\n      from,\n      to,\n      subject,\n      snippet,\n      replyTo,\n      forwardedByResend,\n      alreadyAutoReplied,\n      shouldReply,\n      messageId,\n      fingerprint,\n      internalDate,\n      labels,\n      sizeEstimate,\n      rawHeaders: h,\n      originalPayload: msg.payload\n    }\n  });\n}\nreturn results;"
+      },
+      "name": "Detect & Prepare",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        -464,
+        80
+      ],
+      "id": "98d15c7b-169d-494e-8079-8a1aac395bee"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.shouldReply }}",
+              "value2": "={{ true }}"
+            }
+          ]
+        }
+      },
+      "name": "Is Resend Forward?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        -256,
+        80
+      ],
+      "id": "3a25fb87-f2dd-4616-b61c-4c82da2eeb49"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT COALESCE(COUNT(*),0) AS count\nFROM resend_auto_replies\nWHERE fingerprint = '{{ $json[\"fingerprint\"] }}';",
+        "additionalFields": {}
+      },
+      "name": "Postgres - Check Dedupe",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "4f8e164e-b5ed-4d0f-acf1-b75a648d4388"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ $json[\"count\"] }}",
+              "operation": "equal",
+              "value2": "={{ \"0\" }}"
+            }
+          ]
+        }
+      },
+      "name": "Not Replied Yet?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        272,
+        0
+      ],
+      "id": "5f1e99d6-fe15-4cd3-8da5-840711517ce4"
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "subject": "={{ $json.subject }}",
+        "includeHtml": true,
+        "htmlMessage": "={{ `<html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><style>body{margin:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;background:#f3f4f6}.card{max-width:680px;margin:28px auto;background:#fff;border-radius:10px;overflow:hidden;box-shadow:0 6px 18px rgba(2,6,23,0.08);border:1px solid #e6edf3}.header{background:#111827;color:#fff;padding:20px 28px}.header h1{margin:0;font-size:18px;font-weight:600}.body{padding:28px;color:#111827;line-height:1.5}.cta{display:inline-block;margin-top:18px;background:#0ea5a4;color:#fff;padding:10px 16px;border-radius:8px;text-decoration:none;font-weight:600}.meta{padding:16px 28px;background:#f9fafb;color:#6b7280;font-size:13px;display:flex;justify-content:space-between;align-items:center}.small{font-size:13px;color:#6b7280}@media (max-width:420px){.body{padding:18px}.header{padding:16px}.meta{padding:12px}} </style></head><body><div class='card'><div class='header'><h1>Thanks — I got your message</h1></div><div class='body'><p>Hi,</p><p>Thanks for reaching out. I received your message and will read it as soon as I can. If your message needs an urgent reply, please include a phone number or mark it urgent in the subject and I'll prioritize it.</p><p style='margin:0'>— Best,<br>Portfolio</p><a class='cta' href='mailto:${$json.replyTo}?subject=Re:%20${$json.subject}'>Reply to sender</a></div><div class='meta'><div class='small'>Reply-to: <strong>${$json.replyTo}</strong></div><div class='small'>${new Date().toLocaleDateString()} • Portfolio contact</div></div></div></body></html>` }",
+        "toList": [
+          "={{ $json.replyTo }}"
+        ],
+        "additionalFields": {}
+      },
+      "name": "Send Auto-Reply (Gmail)",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 1,
+      "position": [
+        528,
+        0
+      ],
+      "id": "0fb9b415-c3a4-4a63-92a7-dc0dbdc50162"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO resend_auto_replies (fingerprint, reply_to, subject, created_at)\nVALUES ($1, $2, $3, NOW());",
+        "additionalFields": {
+          "queryParams": "=fingerprint,replyTo,subject"
+        }
+      },
+      "name": "Postgres - Mark Replied",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        1264,
+        0
+      ],
+      "id": "88c1540d-a1a5-4303-9c4b-ad10f636b2a4",
+      "credentials": {
+        "postgres": {
+          "id": "oCZiMq9DIUkaaueB",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Loop over input items and add a new field called 'myNewField' to the JSON of each one\nfor (const item of $input.all()) {\n  item.json.myNewField = 1;\n}\n\nreturn $input.all();"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        784,
+        0
+      ],
+      "id": "d5b062b4-f5c7-4608-8cf7-648c237029a4",
+      "name": "Data Verifier"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1056,
+        0
+      ],
+      "id": "21f61c67-6c4e-4ebb-8c6a-15b0d9ee5d2a",
+      "name": "Value Setter"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Gmail Trigger": {
+      "main": [
+        [
+          {
+            "node": "Detect & Prepare",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Detect & Prepare": {
+      "main": [
+        [
+          {
+            "node": "Is Resend Forward?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Resend Forward?": {
+      "main": [
+        [
+          {
+            "node": "Postgres - Check Dedupe",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres - Check Dedupe": {
+      "main": [
+        [
+          {
+            "node": "Not Replied Yet?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Not Replied Yet?": {
+      "main": [
+        [
+          {
+            "node": "Send Auto-Reply (Gmail)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Auto-Reply (Gmail)": {
+      "main": [
+        [
+          {
+            "node": "Data Verifier",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Data Verifier": {
+      "main": [
+        [
+          {
+            "node": "Value Setter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Value Setter": {
+      "main": [
+        [
+          {
+            "node": "Postgres - Mark Replied",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "",
+  "meta": {
+    "instanceId": "98cc8124e7af18e4082fb6adc32ec9eaa0ee4c4995c328e318716840a757f0be"
+  },
+  "tags": []
+}
